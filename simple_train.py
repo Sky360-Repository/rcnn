@@ -21,7 +21,6 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 
 
-
 class PennFudanDataset(object):
     def __init__(self, root, transforms):
         self.root = root
@@ -110,10 +109,10 @@ class PesmodOpticalFlowDataset(object):
     @staticmethod
     def _get_categories(path, xml_files):
         """Generate category name to id mapping from a list of xml files.
-        
+
         Arguments:
             xml_files {list} -- A list of xml file paths.
-        
+
         Returns:
             dict -- category name to id mapping.
         """
@@ -144,12 +143,12 @@ class PesmodOpticalFlowDataset(object):
 
     def __getitem__(self, idx):
         # load images and masks
-        print(f"Loading item {idx}")
+        #print(f"Loading item {idx}")
         img_path = os.path.join(self.root, "images", self.imgs[idx])
         optical_flow_path = os.path.join(
             self.root, "optical_flow", self.optical_flow_imgs[idx])
         optical_img = Image.open(img_path)
-        optical_flow_img = Image.open(optical_flow_path)
+        optical_flow_img = Image.open(optical_flow_path).convert('HSV')
 
         boxes = []
         xml_file = os.path.join(self.root, "annotations", f"{idx:06}.xml")
@@ -200,8 +199,8 @@ class PesmodOpticalFlowDataset(object):
                 boxes = torch.zeros((0, 4), dtype=torch.float32)
                 area = torch.tensor([0])
             elif num_objs == 1:
-                area = (boxes[0][3] - boxes[0][1]) * \
-                    (boxes[0][2] - boxes[0][0])
+                area = torch.tensor([(boxes[0][3] - boxes[0][1]) *
+                                     (boxes[0][2] - boxes[0][0])])
             else:
                 area = (boxes[:, 3] - boxes[:, 1]) * \
                     (boxes[:, 2] - boxes[:, 0])
@@ -267,7 +266,7 @@ def get_model_instance_segmentation(num_classes):
 
 def get_fasterrcnn_model_instance_segmentation(num_classes):
     # load an instance segmentation model pre-trained pre-trained on COCO
-    #fasterrcnn_mobilenet_v3_large_fpn
+    # fasterrcnn_mobilenet_v3_large_fpn
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         pretrained=False,
         image_mean=[0.485, 0.456, 0.406, 0.485, 0.456, 0.406],
@@ -314,7 +313,25 @@ def matplotlib_imshow(img, one_channel=False):
     else:
         plt.imshow(np.transpose(npimg, (1, 2, 0)))
 
+
+def get_args_parser(add_help=True):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="PyTorch Detection Training", add_help=add_help)
+
+    parser.add_argument("--epochs", default=26, type=int,
+                        metavar="N", help="number of total epochs to run")
+    parser.add_argument("--start_epoch", default=0,
+                        type=int, help="start epoch")
+    parser.add_argument("--resume", default="", type=str,
+                        help="path of checkpoint")
+    return parser
+
+
 def main():
+    args = get_args_parser().parse_args()
+
     # train on the GPU or on the CPU, if a GPU is not available
     device = torch.device(
         'cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -339,11 +356,9 @@ def main():
         dataset_test = PesmodOpticalFlowDataset(
             os.path.join('PESMOD', 'test'), get_transform(train=False))
 
-
-
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=2, shuffle=True, num_workers=4,
+        dataset, batch_size=12, shuffle=True, num_workers=4,
         collate_fn=utils.collate_fn)
 
     data_loader_test = torch.utils.data.DataLoader(
@@ -353,7 +368,6 @@ def main():
     writer = SummaryWriter()
     dataiter = iter(data_loader)
     images, labels = dataiter.next()
-
 
     # get the model using our helper function
     #model = get_model_instance_segmentation(num_classes)
@@ -376,7 +390,14 @@ def main():
 
     output_dir = 'save'
 
-    for epoch in range(num_epochs):
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location="cpu")
+        model.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        args.start_epoch = checkpoint["epoch"] + 1
+
+    for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch, printing every 10 iterations
         train_one_epoch(model, optimizer, data_loader,
                         device, epoch, print_freq=10)
@@ -395,7 +416,6 @@ def main():
                 output_dir, f"model_{epoch}.pth"))
             utils.save_on_master(checkpoint, os.path.join(
                 output_dir, "checkpoint.pth"))
-
 
         # evaluate on the test dataset
         evaluate(model, data_loader_test, device=device)
