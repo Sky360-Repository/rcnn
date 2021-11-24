@@ -292,6 +292,9 @@ def get_fasterrcnn_model(input_channels, classes):
     model = get_fasterrcnn_model_instance_segmentation(classes)
     model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
                                                 stride=2, padding=3, bias=False)
+    for name, param in model.named_parameters():
+        param.requires_grad = True
+        print(f"{name}:{param.requires_grad}")
     return model
 
 
@@ -384,9 +387,6 @@ def main():
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
                                                    step_size=3,
                                                    gamma=0.1)
-
-    # let's train it for 10 epochs
-    num_epochs = 10
 
     output_dir = 'save'
 
