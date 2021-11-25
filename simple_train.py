@@ -1,6 +1,7 @@
 # Sample code from the TorchVision 0.3 Object Detection Finetuning Tutorial
 # http://pytorch.org/tutorials/intermediate/torchvision_tutorial.html
 
+from torchvision.models.detection.rpn import AnchorGenerator
 import os
 import numpy as np
 import torch
@@ -105,6 +106,7 @@ class PesmodOpticalFlowDataset(object):
         self.xmls = list(sorted(os.listdir(os.path.join(root, "annotations"))))
         self.categories = PesmodOpticalFlowDataset._get_categories(
             self.root, self.xmls)
+        self.cache = {}
 
     @staticmethod
     def _get_categories(path, xml_files):
@@ -144,6 +146,10 @@ class PesmodOpticalFlowDataset(object):
     def __getitem__(self, idx):
         # load images and masks
         #print(f"Loading item {idx}")
+        #cached_item = self.cache.get(idx, None)
+        # if cached_item:
+        #    return cached_item
+
         img_path = os.path.join(self.root, "images", self.imgs[idx])
         optical_flow_path = os.path.join(
             self.root, "optical_flow", self.optical_flow_imgs[idx])
@@ -235,8 +241,9 @@ class PesmodOpticalFlowDataset(object):
         #print(f"Merged {merged_tensor}")
 
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
-
-        return merged_tensor, target
+        ret = (merged_tensor, target)
+        #self.cache[idx] = ret
+        return ret
 
     def __len__(self):
         return len(self.imgs)
@@ -264,19 +271,37 @@ def get_model_instance_segmentation(num_classes):
     return model
 
 
-def get_fasterrcnn_model_instance_segmentation(num_classes):
-    # load an instance segmentation model pre-trained pre-trained on COCO
+def get_fasterrcnn_model2(input_channels, num_classes):
+
     # fasterrcnn_mobilenet_v3_large_fpn
+
+    # Default is ((32,), (64,), (128,), (256,), (512,))
+    anchor_sizes = ((2), (4), (8), (16), (32))
+
+    # Default: ((0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0))
+    #aspect_ratios = ((0.5), (1.0), (1.5), (2.0))
+    aspect_ratios = ((0.5, 1.0, 1.5), (0.5, 1.0, 1.5),
+                     (0.5, 1.0, 1.5), (0.5, 1.0, 1.5),
+                     (0.5, 1.0, 1.5))
+
+    anchor_generator = AnchorGenerator(
+        sizes=anchor_sizes, aspect_ratios=aspect_ratios)
+    print(f"sizes: {anchor_sizes}")
+    print(f"ratios: {aspect_ratios}")
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         pretrained=False,
         image_mean=[0.485, 0.456, 0.406, 0.485, 0.456, 0.406],
-        image_std=[0.229, 0.224, 0.225, 0.229, 0.224, 0.225])
+        image_std=[0.229, 0.224, 0.225, 0.229, 0.224, 0.225],
+        rpn_anchor_generator=anchor_generator)
 
     # get number of input features for the classifier
 
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     # replace the pre-trained head with a new one
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+
+    model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
+                                                stride=2, padding=3, bias=False)
 
     return model
 
@@ -285,16 +310,6 @@ def get_model(input_channels, classes):
     model = get_model_instance_segmentation(classes)
     model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
                                                 stride=2, padding=3, bias=False)
-    return model
-
-
-def get_fasterrcnn_model(input_channels, classes):
-    model = get_fasterrcnn_model_instance_segmentation(classes)
-    model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
-                                                stride=2, padding=3, bias=False)
-    for name, param in model.named_parameters():
-        param.requires_grad = True
-        print(f"{name}:{param.requires_grad}")
     return model
 
 
@@ -358,6 +373,8 @@ def main():
             os.path.join('PESMOD', 'train'), get_transform(train=True))
         dataset_test = PesmodOpticalFlowDataset(
             os.path.join('PESMOD', 'test'), get_transform(train=False))
+        indices = torch.randperm(len(dataset_test)).tolist()
+        dataset_test = torch.utils.data.Subset(dataset_test, indices[:200])
 
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(
@@ -374,7 +391,7 @@ def main():
 
     # get the model using our helper function
     #model = get_model_instance_segmentation(num_classes)
-    model = get_fasterrcnn_model(input_channels=6, classes=2)
+    model = get_fasterrcnn_model2(6, 2)
 
     # move model to the right device
     model.to(device)
