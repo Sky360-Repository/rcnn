@@ -5,9 +5,10 @@ from torchvision.models.detection.rpn import AnchorGenerator
 import os
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import torchvision
+
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 
@@ -228,16 +229,17 @@ class PesmodOpticalFlowDataset(object):
         target["iscrowd"] = iscrowd
         #print(f"target: {target}")
 
+        optical_tensor = torchvision.transforms.ToTensor()(optical_img)
+        optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
+        merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
+
         if self.transforms is not None:
-            optical_img, target1 = self.transforms(optical_img, target)
-            optical_flow_img, target = self.transforms(
-                optical_flow_img, target)
+            merged_tensor, target = self.transforms(merged_tensor, target)
+            
 
 # image: tensor([[[0.0627, 0.0314, 0.1098,  ..., 0.8157, 0.8314, 0.8471],
 #         [0.0510, 0.0353, 0.0941,  ..., 0.7922, 0.7765, 0.8235],
 #         [0.0627, 0.0627, 0.0980,  ..., 0.6353, 0.4510, 0.3608],
-
-        merged_tensor = torch.cat((optical_img, optical_flow_img), 0)
         #print(f"Merged {merged_tensor}")
 
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
@@ -315,21 +317,10 @@ def get_model(input_channels, classes):
 
 def get_transform(train):
     transforms = []
-    transforms.append(T.ToTensor())
+    #transforms.append(T.ToTensor())
     if train:
         transforms.append(T.RandomHorizontalFlip(0.5))
     return T.Compose(transforms)
-
-
-def matplotlib_imshow(img, one_channel=False):
-    if one_channel:
-        img = img.mean(dim=0)
-    img = img / 2 + 0.5     # unnormalize
-    npimg = img.numpy()
-    if one_channel:
-        plt.imshow(npimg, cmap="Greys")
-    else:
-        plt.imshow(np.transpose(npimg, (1, 2, 0)))
 
 
 def get_args_parser(add_help=True):
@@ -344,7 +335,50 @@ def get_args_parser(add_help=True):
                         type=int, help="start epoch")
     parser.add_argument("--resume", default="", type=str,
                         help="path of checkpoint")
+    # Mixed precision training parameters
+    parser.add_argument("--amp", action="store_true",
+                        help="Use torch.cuda.amp for mixed precision training")
+
     return parser
+
+
+def render_boxes(bboxes, image):
+    pil_image = torchvision.transforms.ToPILImage()(image.squeeze_(0))
+    draw = ImageDraw.Draw(pil_image)
+    for bbox in bboxes:
+        draw.rectangle(bbox, fill="red")
+    return torchvision.transforms.ToTensor()(pil_image)
+
+
+def write_to_tb(data_loader):
+    writer = SummaryWriter()
+    dataiter = iter(data_loader)
+    images, labels = dataiter.next()
+    opticals = []
+    optical_flows = []
+    for image, label in zip(images, labels):
+        # print()
+        bboxes = label['boxes'].numpy()
+        optical = image[:3]
+        #print(optical.shape)
+        optical_flow = image[3:]
+        #print(optical_flow.shape)
+        annotated_optical = render_boxes(bboxes, optical)
+        annotated_optical_flow = render_boxes(bboxes, optical_flow)
+        #print(annotated_optical.shape)
+
+        opticals.append(annotated_optical)
+        optical_flows.append(annotated_optical_flow)
+    # create grid of images
+    optical_img_grid = torchvision.utils.make_grid(opticals)
+    optical_flow_img_grid = torchvision.utils.make_grid(optical_flows)
+
+    # show images
+    # matplotlib_imshow(img_grid)
+
+    # write to tensorboard
+    writer.add_image('optical', optical_img_grid)
+    writer.add_image('optical-flow', optical_flow_img_grid)
 
 
 def main():
@@ -385,9 +419,7 @@ def main():
         dataset_test, batch_size=1, shuffle=False, num_workers=4,
         collate_fn=utils.collate_fn)
 
-    writer = SummaryWriter()
-    dataiter = iter(data_loader)
-    images, labels = dataiter.next()
+    write_to_tb(data_loader)
 
     # get the model using our helper function
     #model = get_model_instance_segmentation(num_classes)
@@ -404,6 +436,10 @@ def main():
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
                                                    step_size=3,
                                                    gamma=0.1)
+    scaler = None
+    if args.amp:
+        scaler = torch.cuda.amp.GradScaler()
+        print("Using amp")
 
     output_dir = 'save'
 
@@ -413,11 +449,13 @@ def main():
         optimizer.load_state_dict(checkpoint["optimizer"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         args.start_epoch = checkpoint["epoch"] + 1
+        if args.amp:
+            scaler.load_state_dict(checkpoint["scaler"])
 
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch, printing every 10 iterations
         train_one_epoch(model, optimizer, data_loader,
-                        device, epoch, print_freq=10)
+                        device, epoch, 10, scaler)
         # update the learning rate
         lr_scheduler.step()
 
@@ -429,6 +467,8 @@ def main():
                 "args": {},
                 "epoch": epoch,
             }
+            if args.amp:
+                checkpoint["scaler"] = scaler.state_dict()
             utils.save_on_master(checkpoint, os.path.join(
                 output_dir, f"model_{epoch}.pth"))
             utils.save_on_master(checkpoint, os.path.join(

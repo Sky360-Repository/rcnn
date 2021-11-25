@@ -34,6 +34,7 @@ class RandomHorizontalFlip(T.RandomHorizontalFlip):
         if torch.rand(1) < self.p:
             image = F.hflip(image)
             if target is not None:
+                #print("flipping boxes")
                 if len(target["boxes"] > 0):
                     width, _ = F.get_image_size(image)
                     target["boxes"][:, [0, 2]] = width - \
