@@ -235,7 +235,7 @@ class PesmodOpticalFlowDataset(object):
 
         if self.transforms is not None:
             merged_tensor, target = self.transforms(merged_tensor, target)
-            
+
 
 # image: tensor([[[0.0627, 0.0314, 0.1098,  ..., 0.8157, 0.8314, 0.8471],
 #         [0.0510, 0.0353, 0.0941,  ..., 0.7922, 0.7765, 0.8235],
@@ -317,7 +317,7 @@ def get_model(input_channels, classes):
 
 def get_transform(train):
     transforms = []
-    #transforms.append(T.ToTensor())
+    # transforms.append(T.ToTensor())
     if train:
         transforms.append(T.RandomHorizontalFlip(0.5))
     return T.Compose(transforms)
@@ -354,31 +354,20 @@ def write_to_tb(data_loader):
     writer = SummaryWriter()
     dataiter = iter(data_loader)
     images, labels = dataiter.next()
-    opticals = []
-    optical_flows = []
-    for image, label in zip(images, labels):
-        # print()
-        bboxes = label['boxes'].numpy()
+    
+    count = 0
+    for image, target in zip(images, labels):
+
+        bboxes = target['boxes'].numpy()
         optical = image[:3]
-        #print(optical.shape)
         optical_flow = image[3:]
-        #print(optical_flow.shape)
-        annotated_optical = render_boxes(bboxes, optical)
-        annotated_optical_flow = render_boxes(bboxes, optical_flow)
-        #print(annotated_optical.shape)
 
-        opticals.append(annotated_optical)
-        optical_flows.append(annotated_optical_flow)
-    # create grid of images
-    optical_img_grid = torchvision.utils.make_grid(opticals)
-    optical_flow_img_grid = torchvision.utils.make_grid(optical_flows)
+        writer.add_image_with_boxes(
+            f"optical-{count}", optical, target['boxes'], global_step=count)
+        writer.add_image_with_boxes(
+            f"optical-flow-{count}", optical_flow, target['boxes'], global_step=count)
+        count += 1
 
-    # show images
-    # matplotlib_imshow(img_grid)
-
-    # write to tensorboard
-    writer.add_image('optical', optical_img_grid)
-    writer.add_image('optical-flow', optical_flow_img_grid)
 
 
 def main():
