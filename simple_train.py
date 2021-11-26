@@ -107,7 +107,32 @@ class PesmodOpticalFlowDataset(object):
         self.xmls = list(sorted(os.listdir(os.path.join(root, "annotations"))))
         self.categories = PesmodOpticalFlowDataset._get_categories(
             self.root, self.xmls)
+        self.filter_no_identifications()
         self.cache = {}
+
+    def filter_no_identifications(self):
+        print("Filtering")
+        new_imgs = []
+        new_of_imgs = []
+        new_xmls = []
+        for img, of_img, xml in zip(self.imgs, self.optical_flow_imgs, self.xmls):
+            filename = os.path.join(self.root, "annotations", xml)
+            tree = ET.parse(filename)
+            tree_root = tree.getroot()
+            count = 0
+            for obj in tree_root.findall("object"):
+                #bndbox = PesmodOpticalFlowDataset._get_and_check(
+                #    obj, "bndbox", 1)
+                count += 1
+            print(f"{xml}:{count}")
+            if count > 0:
+                new_imgs.append(img)
+                new_of_imgs.append(of_img)
+                new_xmls.append(xml)
+        self.imgs = new_imgs
+        self.optical_flow_imgs = new_of_imgs
+        self.xmls = new_xmls
+
 
     @staticmethod
     def _get_categories(path, xml_files):
@@ -123,8 +148,8 @@ class PesmodOpticalFlowDataset(object):
         for xml_file in xml_files:
             filename = os.path.join(path, "annotations", xml_file)
             tree = ET.parse(filename)
-            root = tree.getroot()
-            for member in root.findall("object"):
+            tree_root = tree.getroot()
+            for member in tree_root.findall("object"):
                 classes_names.append(member[0].text)
         classes_names = list(set(classes_names))
         classes_names.sort()
@@ -158,7 +183,7 @@ class PesmodOpticalFlowDataset(object):
         optical_flow_img = Image.open(optical_flow_path).convert('HSV')
 
         boxes = []
-        xml_file = os.path.join(self.root, "annotations", f"{idx:06}.xml")
+        xml_file = os.path.join(self.root, "annotations", self.xmls[idx])
         tree = ET.parse(xml_file)
         root = tree.getroot()
         boxes = []
@@ -203,6 +228,7 @@ class PesmodOpticalFlowDataset(object):
         try:
 
             if num_objs == 0:
+                raise Exception(f"Found image with no objects: {idx}")
                 boxes = torch.zeros((0, 4), dtype=torch.float32)
                 area = torch.tensor([0])
             elif num_objs == 1:
