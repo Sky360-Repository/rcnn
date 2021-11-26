@@ -123,10 +123,10 @@ class PesmodOpticalFlowDataset(object):
             tree_root = tree.getroot()
             count = 0
             for obj in tree_root.findall("object"):
-                #bndbox = PesmodOpticalFlowDataset._get_and_check(
+                # bndbox = PesmodOpticalFlowDataset._get_and_check(
                 #    obj, "bndbox", 1)
                 count += 1
-            print(f"{xml}:{count}")
+            #print(f"{xml}:{count}")
             if count > 0:
                 new_imgs.append(img)
                 new_of_imgs.append(of_img)
@@ -134,7 +134,6 @@ class PesmodOpticalFlowDataset(object):
         self.imgs = new_imgs
         self.optical_flow_imgs = new_of_imgs
         self.xmls = new_xmls
-
 
     @staticmethod
     def _get_categories(path, xml_files):
@@ -260,7 +259,7 @@ class PesmodOpticalFlowDataset(object):
         optical_tensor = torchvision.transforms.ToTensor()(optical_img)
         optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
-        #print(merged_tensor)
+        # print(merged_tensor)
         if self.transforms is not None:
             merged_tensor, target = self.transforms(merged_tensor, target)
 
@@ -326,7 +325,6 @@ def get_fasterrcnn_model2(input_channels, num_classes):
         image_mean = [0.485, 0.456, 0.406, 0.485, 0.456, 0.406]
         image_std = [0.229, 0.224, 0.225, 0.229, 0.224, 0.225]
 
-
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         pretrained=False,
         image_mean=image_mean,
@@ -379,6 +377,12 @@ def get_args_parser(add_help=True):
     parser.add_argument("--amp", action="store_true",
                         help="Use torch.cuda.amp for mixed precision training")
 
+    parser.add_argument(
+        "--test-only",
+        dest="test_only",
+        help="Only test the model",
+        action="store_true",
+    )
     return parser
 
 
@@ -390,15 +394,14 @@ def render_boxes(bboxes, image):
     return torchvision.transforms.ToTensor()(pil_image)
 
 
-def write_to_tb(data_loader):
+def write_to_tb(data_loader, model):
     writer = SummaryWriter()
     dataiter = iter(data_loader)
     images, labels = dataiter.next()
-    
+
     count = 0
     for image, target in zip(images, labels):
 
-        bboxes = target['boxes'].numpy()
         optical = image[:3]
         optical_flow = image[3:]
 
@@ -407,7 +410,8 @@ def write_to_tb(data_loader):
         writer.add_image_with_boxes(
             f"optical-flow-{count}", optical_flow, target['boxes'], global_step=count)
         count += 1
-
+    # Errors
+    #writer.add_graph(model, input_to_model=images)
 
 
 def main():
@@ -431,7 +435,7 @@ def main():
         indices = torch.randperm(len(dataset)).tolist()
         dataset = torch.utils.data.Subset(dataset, indices[:-50])
         dataset_test = torch.utils.data.Subset(dataset_test, indices[-50:])
-        num_channels=3
+        num_channels = 3
         batch_size = 6
     else:
         dataset = PesmodOpticalFlowDataset(
@@ -439,7 +443,8 @@ def main():
         dataset_test = PesmodOpticalFlowDataset(
             os.path.join('PESMOD', 'test'), get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
-        dataset_test = torch.utils.data.Subset(dataset_test, indices[:200])
+
+        dataset_test = torch.utils.data.Subset(dataset_test, indices[:1])
         num_channels=6
         batch_size = 6
 
@@ -452,9 +457,9 @@ def main():
         dataset_test, batch_size=1, shuffle=False, num_workers=4,
         collate_fn=utils.collate_fn)
 
-    #write_to_tb(data_loader)
-
     model = get_fasterrcnn_model2(num_channels, 2)
+
+    write_to_tb(data_loader, model)
 
     # move model to the right device
     model.to(device)
@@ -482,6 +487,11 @@ def main():
         args.start_epoch = checkpoint["epoch"] + 1
         if args.amp:
             scaler.load_state_dict(checkpoint["scaler"])
+
+    if args.test_only:
+        print("Testing only")
+        evaluate(model, data_loader_test, device=device)
+        return
 
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch, printing every 10 iterations
