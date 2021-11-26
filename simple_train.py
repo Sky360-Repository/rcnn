@@ -331,7 +331,9 @@ def get_fasterrcnn_model2(input_channels, num_classes):
         pretrained=False,
         image_mean=image_mean,
         image_std=image_std,
-        rpn_anchor_generator=anchor_generator)
+        rpn_anchor_generator=anchor_generator,
+        min_size=1080,
+        max_size=2048)
 
     # get number of input features for the classifier
 
@@ -439,7 +441,7 @@ def main():
         indices = torch.randperm(len(dataset_test)).tolist()
         dataset_test = torch.utils.data.Subset(dataset_test, indices[:200])
         num_channels=6
-        batch_size = 12
+        batch_size = 6
 
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(
