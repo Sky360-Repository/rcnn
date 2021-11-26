@@ -46,14 +46,14 @@ class PennFudanDataset(object):
         mask = np.array(mask)
         # instances are encoded as different colors
         obj_ids = np.unique(mask)
-        print(f"obj_ids: {obj_ids}")
+        #print(f"obj_ids: {obj_ids}")
         # first id is the background, so remove it
         obj_ids = obj_ids[1:]
 
         # split the color-encoded mask into a set
         # of binary masks
         masks = mask == obj_ids[:, None, None]
-        print(f"masks: {masks}")
+        #print(f"masks: {masks}")
 
         # get bounding box coordinates for each mask
         num_objs = len(obj_ids)
@@ -84,7 +84,9 @@ class PennFudanDataset(object):
         target["image_id"] = image_id
         target["area"] = area
         target["iscrowd"] = iscrowd
-        print(f"target: {target}")
+        #print(f"target: {target}")
+
+        img = torchvision.transforms.ToTensor()(img)
 
         if self.transforms is not None:
             img, target = self.transforms(img, target)
@@ -258,7 +260,7 @@ class PesmodOpticalFlowDataset(object):
         optical_tensor = torchvision.transforms.ToTensor()(optical_img)
         optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
-
+        #print(merged_tensor)
         if self.transforms is not None:
             merged_tensor, target = self.transforms(merged_tensor, target)
 
@@ -316,10 +318,19 @@ def get_fasterrcnn_model2(input_channels, num_classes):
         sizes=anchor_sizes, aspect_ratios=aspect_ratios)
     print(f"sizes: {anchor_sizes}")
     print(f"ratios: {aspect_ratios}")
+
+    if input_channels == 3:
+        image_mean = [0.485, 0.456, 0.406]
+        image_std = [0.229, 0.224, 0.225]
+    elif input_channels == 6:
+        image_mean = [0.485, 0.456, 0.406, 0.485, 0.456, 0.406]
+        image_std = [0.229, 0.224, 0.225, 0.229, 0.224, 0.225]
+
+
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         pretrained=False,
-        image_mean=[0.485, 0.456, 0.406, 0.485, 0.456, 0.406],
-        image_std=[0.229, 0.224, 0.225, 0.229, 0.224, 0.225],
+        image_mean=image_mean,
+        image_std=image_std,
         rpn_anchor_generator=anchor_generator)
 
     # get number of input features for the classifier
@@ -343,7 +354,8 @@ def get_model(input_channels, classes):
 
 def get_transform(train):
     transforms = []
-    # transforms.append(T.ToTensor())
+    # This is done in the loader now instead
+    #  transforms.append(T.ToTensor())
     if train:
         transforms.append(T.RandomHorizontalFlip(0.5))
     return T.Compose(transforms)
@@ -417,6 +429,8 @@ def main():
         indices = torch.randperm(len(dataset)).tolist()
         dataset = torch.utils.data.Subset(dataset, indices[:-50])
         dataset_test = torch.utils.data.Subset(dataset_test, indices[-50:])
+        num_channels=3
+        batch_size = 6
     else:
         dataset = PesmodOpticalFlowDataset(
             os.path.join('PESMOD', 'train'), get_transform(train=True))
@@ -424,21 +438,21 @@ def main():
             os.path.join('PESMOD', 'test'), get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
         dataset_test = torch.utils.data.Subset(dataset_test, indices[:200])
+        num_channels=6
+        batch_size = 12
 
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=12, shuffle=True, num_workers=4,
+        dataset, batch_size=batch_size, shuffle=True, num_workers=4,
         collate_fn=utils.collate_fn)
 
     data_loader_test = torch.utils.data.DataLoader(
         dataset_test, batch_size=1, shuffle=False, num_workers=4,
         collate_fn=utils.collate_fn)
 
-    write_to_tb(data_loader)
+    #write_to_tb(data_loader)
 
-    # get the model using our helper function
-    #model = get_model_instance_segmentation(num_classes)
-    model = get_fasterrcnn_model2(6, 2)
+    model = get_fasterrcnn_model2(num_channels, 2)
 
     # move model to the right device
     model.to(device)
