@@ -1,6 +1,7 @@
 # Sample code from the TorchVision 0.3 Object Detection Finetuning Tutorial
 # http://pytorch.org/tutorials/intermediate/torchvision_tutorial.html
 
+import json
 from torchvision.models.detection.rpn import AnchorGenerator
 import os
 import numpy as np
@@ -97,6 +98,114 @@ class PennFudanDataset(object):
         return len(self.imgs)
 
 
+class STFOpticalFlowDataset(object):
+    def __init__(self, root, transforms):
+        self.root = root
+        self.transforms = transforms
+        self.labels = {'motion': 1}
+
+        # map of image filename to return item
+        self.image_items_map = {}
+
+        # Map of dataloaders assigned image number to image filenames
+        self.image_files = {}
+
+        # The current index of the self.image_files structure
+        self.image_file_index = 0
+
+        for key, value in self.classes.items():
+            self.labels[value] = key
+
+        # Map of imagename -> [{'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'class': class_name}...]
+        self.image_data = {}
+
+        for name in os.listdir(self.root):
+            path = os.path.join(self.root, name)
+            if os.path.isdir(path):
+                annotations_filename = os.path.join(path, 'annotations.json')
+                with open(annotations_filename, 'r') as file:
+                    annotations_file = json.load(file)
+
+                image_dir = os.path.join(path, 'images')
+                for frame in annotations_file['frames']:
+                    frame_number = frame['frame']
+                    image_filename = os.path.join(
+                        image_dir, f"{frame_number:06}.jpg")
+                    boxes = np.zeros((0, 5))
+                    for ann_dict in frame['annotations']:
+                        bbox = ann_dict['bbox']
+
+                        ann_row = np.zeros((1, 5))
+                        ann_row[0, 0] = bbox[0]
+                        ann_row[0, 1] = bbox[1]
+                        ann_row[0, 2] = bbox[2]
+                        ann_row[0, 3] = bbox[3]
+
+                        ann_row[0, 4] = self.tracker_id_to_class_id(
+                            annotations_file, ann_dict)
+                        boxes = np.append(
+                            boxes, ann_row, axis=0)
+                    # transform from [x, y, w, h] to [x1, y1, x2, y2]
+                    boxes[:, 2] = boxes[:, 0] + boxes[:, 2]
+                    boxes[:, 3] = boxes[:, 1] + boxes[:, 3]
+                    area = (
+                        boxes[:, 3] - boxes[:, 1]) * \
+                        (boxes[:, 2] - boxes[:, 0])
+                    num_objs = len(boxes)
+                    target = {}
+                    target["boxes"] = boxes
+                    target["labels"] = torch.ones(
+                        (num_objs,), dtype=torch.int64)
+                    target["image_id"] = frame_number
+                    target["area"] = area
+                    target["iscrowd"] = False
+
+                    self._add(image_filename, target)
+
+    def tracker_id_to_class_id(self, annotations_file, annotation):
+        tracker_id = annotation['track_id']
+        label = annotations_file['track_labels'][str(tracker_id)]
+        return self.classes[label]
+
+    def _add(self, image_filename, target):
+        if image_filename in self.image_items_map:
+            raise Exception('dupe file')
+        else:
+            self.image_files[self.image_file_index] = {
+                'image_filename': image_filename,
+                'target': target
+            }
+            self.image_file_index += 1
+
+    def __getitem__(self, idx):
+        sample = self.image_files[idx]
+
+        img = self._load_image(sample['image_filename'])
+        target = sample['target']
+
+        if self.transforms is not None:
+            img, target = self.transforms(img, target)
+
+        return img, target
+
+    def image_aspect_ratio(self, image_index):
+        image_filename = self.image_files[image_index]
+        print(f"image_aspect_ratio loading {image_filename}")
+        image = self._load_image(image_filename)
+        height, width, depth = image.shape
+        print(f"image_aspect_ratio h,w,d: {height, width, depth}")
+        return float(width) / float(height)
+
+    def _load_image(self, image_filename):
+        return Image.open(image_filename)
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def num_classes(self):
+        return len(self.classes)
+
+
 class PesmodOpticalFlowDataset(object):
     def __init__(self, root, transforms):
         self.root = root
@@ -126,7 +235,7 @@ class PesmodOpticalFlowDataset(object):
                 # bndbox = PesmodOpticalFlowDataset._get_and_check(
                 #    obj, "bndbox", 1)
                 count += 1
-            #print(f"{xml}:{count}")
+            # print(f"{xml}:{count}")
             if count > 0:
                 new_imgs.append(img)
                 new_of_imgs.append(of_img)
@@ -444,8 +553,9 @@ def main():
             os.path.join('PESMOD', 'test'), get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
 
-        dataset_test = torch.utils.data.Subset(dataset_test, indices[:1])
-        num_channels=6
+        dataset_test = torch.utils.data.Subset(dataset_test, indices[:10])
+        print(indices[:10])
+        num_channels = 6
         batch_size = 6
 
     # define training and validation data loaders
@@ -459,7 +569,7 @@ def main():
 
     model = get_fasterrcnn_model2(num_channels, 2)
 
-    write_to_tb(data_loader, model)
+    #write_to_tb(data_loader, model)
 
     # move model to the right device
     model.to(device)
