@@ -1,6 +1,7 @@
 # Sample code from the TorchVision 0.3 Object Detection Finetuning Tutorial
 # http://pytorch.org/tutorials/intermediate/torchvision_tutorial.html
 
+from dense_optical_flow import DenseOpticalFlow
 import json
 from torchvision.models.detection.rpn import AnchorGenerator
 import os
@@ -113,66 +114,65 @@ class STFOpticalFlowDataset(object):
         # The current index of the self.image_files structure
         self.image_file_index = 0
 
+        self.classes = {
+            'unknown': 1
+        }
+
         for key, value in self.classes.items():
             self.labels[value] = key
 
         # Map of imagename -> [{'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'class': class_name}...]
         self.image_data = {}
 
-        for name in os.listdir(self.root):
-            path = os.path.join(self.root, name)
-            if os.path.isdir(path):
-                annotations_filename = os.path.join(path, 'annotations.json')
-                with open(annotations_filename, 'r') as file:
-                    annotations_file = json.load(file)
+        annotations_filename = os.path.join(self.root, 'annotations.json')
+        with open(annotations_filename, 'r') as file:
+            annotations_file = json.load(file)
+        dof = None
+        for frame in annotations_file['frames']:
+            frame_number = frame['frame']
 
-                image_dir = os.path.join(path, 'images')
-                for frame in annotations_file['frames']:
-                    frame_number = frame['frame']
-                    image_filename = os.path.join(
-                        image_dir, f"{frame_number:06}.jpg")
-                    boxes = np.zeros((0, 5))
-                    for ann_dict in frame['annotations']:
-                        bbox = ann_dict['bbox']
+            boxes = np.zeros((0, 4))
+            for ann_dict in frame['annotations']:
+                bbox = ann_dict['bbox']
 
-                        ann_row = np.zeros((1, 5))
-                        ann_row[0, 0] = bbox[0]
-                        ann_row[0, 1] = bbox[1]
-                        ann_row[0, 2] = bbox[2]
-                        ann_row[0, 3] = bbox[3]
+                ann_row = np.zeros((1, 4))
+                ann_row[0, 0] = bbox[0]
+                ann_row[0, 1] = bbox[1]
+                ann_row[0, 2] = bbox[2]
+                ann_row[0, 3] = bbox[3]
 
-                        ann_row[0, 4] = self.tracker_id_to_class_id(
-                            annotations_file, ann_dict)
-                        boxes = np.append(
-                            boxes, ann_row, axis=0)
-                    # transform from [x, y, w, h] to [x1, y1, x2, y2]
-                    boxes[:, 2] = boxes[:, 0] + boxes[:, 2]
-                    boxes[:, 3] = boxes[:, 1] + boxes[:, 3]
-                    area = (
-                        boxes[:, 3] - boxes[:, 1]) * \
-                        (boxes[:, 2] - boxes[:, 0])
-                    num_objs = len(boxes)
-                    target = {}
-                    target["boxes"] = boxes
-                    target["labels"] = torch.ones(
-                        (num_objs,), dtype=torch.int64)
-                    target["image_id"] = frame_number
-                    target["area"] = area
-                    target["iscrowd"] = False
+                boxes = np.append(
+                    boxes, ann_row, axis=0)
+            # transform from [x, y, w, h] to [x1, y1, x2, y2]
+            boxes[:, 2] = boxes[:, 0] + boxes[:, 2]
+            boxes[:, 3] = boxes[:, 1] + boxes[:, 3]
+            area = (
+                boxes[:, 3] - boxes[:, 1]) * \
+                (boxes[:, 2] - boxes[:, 0])
+            num_objs = len(boxes)
+            target = {}
+            target["boxes"] = torch.as_tensor(boxes, dtype=torch.float32)
+            target["labels"] = torch.ones(
+                (num_objs,), dtype=torch.int64)
+            target["image_id"] = torch.tensor([frame_number])
+            target["area"] = torch.tensor(area)
+            target["iscrowd"] = torch.zeros((num_objs,), dtype=torch.int64)
+            print(target)
 
-                    self._add(image_filename, target)
+            self._add(frame_number, target)
 
     def tracker_id_to_class_id(self, annotations_file, annotation):
         tracker_id = annotation['track_id']
         label = annotations_file['track_labels'][str(tracker_id)]
         return self.classes[label]
 
-    def _add(self, image_filename, target):
-        if image_filename in self.image_items_map:
+    def _add(self, frame_number, target):
+        print(f"Adding: {frame_number}")
+        if frame_number in self.image_items_map:
             raise Exception('dupe file')
         else:
             self.image_files[self.image_file_index] = {
-                'image_filename': image_filename,
+                'frame_number': frame_number,
                 'target': target
             }
             self.image_file_index += 1
@@ -180,13 +180,28 @@ class STFOpticalFlowDataset(object):
     def __getitem__(self, idx):
         sample = self.image_files[idx]
 
-        img = self._load_image(sample['image_filename'])
+        frame_number = sample['frame_number']
+
+        image_dir = os.path.join(self.root, 'images')
+        image_filename = os.path.join(
+            image_dir, f"{frame_number:06}.original.jpg")
+        img = self._load_image(image_filename)
+
+        optical_flow_path = os.path.join(
+            self.root, 'images', f"{frame_number:06}.optical_flow.jpg")
+
+        optical_flow_img = self._load_image(optical_flow_path)
+
         target = sample['target']
 
+        optical_tensor = torchvision.transforms.ToTensor()(img)
+        optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
+        merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
+        # print(merged_tensor)
         if self.transforms is not None:
-            img, target = self.transforms(img, target)
+            merged_tensor, target = self.transforms(merged_tensor, target)
 
-        return img, target
+        return merged_tensor, target
 
     def image_aspect_ratio(self, image_index):
         image_filename = self.image_files[image_index]
@@ -534,7 +549,19 @@ def main():
     num_classes = 2
     # use our dataset and defined transformations
 
-    if False:
+    dataset_name = 'stf'
+    if dataset_name == 'stf':
+        dataset_test = STFOpticalFlowDataset(
+            #'../simpletracker/output/2021_11_26-06_18_02_PM/video_000000/',
+            #'../simpletracker/output/2021_11_26-07_18_24_PM/birds_and_plane_000000/',
+            '../simpletracker/output/2021_11_26-08_16_29_PM/Test_Trimmed_000000/',
+            get_transform(train=False))
+        indices = torch.randperm(len(dataset_test)).tolist()
+        dataset_test = torch.utils.data.Subset(dataset_test, indices[:10])
+        num_channels = 6
+        batch_size = 6
+
+    elif dataset_name == 'PennFudanDataset':
         dataset = PennFudanDataset(
             'PennFudanPed', get_transform(train=True))
         dataset_test = PennFudanDataset(
@@ -546,7 +573,8 @@ def main():
         dataset_test = torch.utils.data.Subset(dataset_test, indices[-50:])
         num_channels = 3
         batch_size = 6
-    else:
+
+    elif dataset_name == 'PesmodOpticalFlowDataset':
         dataset = PesmodOpticalFlowDataset(
             os.path.join('PESMOD', 'train'), get_transform(train=True))
         dataset_test = PesmodOpticalFlowDataset(
@@ -558,10 +586,10 @@ def main():
         num_channels = 6
         batch_size = 6
 
-    # define training and validation data loaders
-    data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, num_workers=4,
-        collate_fn=utils.collate_fn)
+    if not args.test_only:
+        data_loader = torch.utils.data.DataLoader(
+            dataset, batch_size=batch_size, shuffle=True, num_workers=4,
+            collate_fn=utils.collate_fn)
 
     data_loader_test = torch.utils.data.DataLoader(
         dataset_test, batch_size=1, shuffle=False, num_workers=4,
