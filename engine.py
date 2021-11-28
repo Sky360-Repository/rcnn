@@ -153,7 +153,7 @@ def evaluate(model, data_loader, device, epoch):
     cnt = 0
     for images, targets in metric_logger.log_every(data_loader, 100, header):
         opticals = images
-        print(images[0].shape)
+        #print(images[0].shape)
         images = list(img.to(device) for img in images)
         #print(f"image shape:{images[0].shape}")
         # print(f"target:{targets[0]}")
