@@ -332,16 +332,7 @@ class PesmodOpticalFlowDataset(object):
             assert ymax > ymin
             boxes.append([xmin, ymin, xmax, ymax])
         num_objs = len(boxes)
-        #print(f"loaded boxes {idx}:{num_objs}")
-# 'boxes': tensor([[ 46.,  84., 146., 291.],
-#                  [162.,  86., 239., 347.],
-#                  [224.,  85., 299., 306.],
-#                  [315.,  80., 390., 368.],
-#                  [374.,  99., 470., 350.],
-#                  [469.,  93., 558., 394.],
-#                  [532.,  89., 604., 375.]])
-
-        #print(f"Boxes bf conversion {idx}: {boxes}")
+        print(f"loaded boxes {self.xmls[idx]}:{idx}: {boxes}")
 
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
 

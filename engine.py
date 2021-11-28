@@ -174,7 +174,7 @@ def evaluate(model, data_loader, device, epoch):
             of_image_tensor = torchvision.transforms.ToPILImage()(
                 optical_flow_image.squeeze_(0))
             outputboxes = boxes
-            targetboxes = _convert_bbox(target['boxes'])
+            targetboxes = target['boxes']
             print(f"outputboxes:{boxes}")
             print(f"targetboxes:{target['boxes']}")
             image_tensor = draw_boxes(image_tensor, outputboxes, 'Red')
