@@ -187,7 +187,7 @@ def evaluate(model, data_loader, device, epoch):
             optical_flow_image = torchvision.transforms.ToTensor()(of_image_tensor)
             grid = torchvision.utils.make_grid(
                 [optical_image, optical_flow_image])
-            tb.add_image(f"output-{out['image_id']}",
+            tb.add_image(f"output-{target['image_id'].numpy()[0]}",
                          grid, global_step=epoch)
             cnt += 1
 
