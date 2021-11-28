@@ -163,10 +163,10 @@ def evaluate(model, data_loader, device, epoch):
         model_time = time.time()
         outputs = model(images)
 
-        print(f"outputs len:{len(outputs)}, images len:{len(opticals)}")
+        #print(f"outputs len:{len(outputs)}, images len:{len(opticals)}")
 
         for out, img, target in zip(outputs, opticals, targets):
-            print(f"dealing with boxes:#{len(out['boxes'])}, img:{img.shape}")
+            #print(f"dealing with boxes:#{len(out['boxes'])}, img:{img.shape}")
             optical_image = img[:3]
             optical_flow_image = img[3:]
             boxes = out['boxes']
@@ -175,8 +175,8 @@ def evaluate(model, data_loader, device, epoch):
                 optical_flow_image.squeeze_(0))
             outputboxes = boxes
             targetboxes = target['boxes']
-            print(f"outputboxes:{boxes}")
-            print(f"targetboxes:{target['boxes']}")
+            #print(f"outputboxes:{boxes}")
+            #print(f"targetboxes:{target['boxes']}")
             image_tensor = draw_boxes(image_tensor, outputboxes, 'Red')
             image_tensor = draw_boxes(image_tensor, targetboxes, 'Green')
             of_image_tensor = draw_boxes(
