@@ -549,12 +549,12 @@ def main():
     num_classes = 2
     # use our dataset and defined transformations
 
-    dataset_name = 'stf'
+    dataset_name = 'Combined'
     if dataset_name == 'stf':
         dataset_test = STFOpticalFlowDataset(
-            #'../simpletracker/output/2021_11_26-06_18_02_PM/video_000000/',
+            '../simpletracker/output/2021_11_26-06_18_02_PM/video_000000/',
             #'../simpletracker/output/2021_11_26-07_18_24_PM/birds_and_plane_000000/',
-            '../simpletracker/output/2021_11_26-08_16_29_PM/Test_Trimmed_000000/',
+            #'../simpletracker/output/2021_11_26-08_16_29_PM/Test_Trimmed_000000/',
             get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
         dataset_test = torch.utils.data.Subset(dataset_test, indices[:10])
@@ -574,14 +574,14 @@ def main():
         num_channels = 3
         batch_size = 6
 
-    elif dataset_name == 'PesmodOpticalFlowDataset':
+    elif dataset_name == 'Combined':
         dataset = PesmodOpticalFlowDataset(
-            os.path.join('PESMOD', 'train'), get_transform(train=True))
+            os.path.join('INPUT', 'train'), get_transform(train=True))
         dataset_test = PesmodOpticalFlowDataset(
-            os.path.join('PESMOD', 'test'), get_transform(train=False))
+            os.path.join('INPUT', 'test'), get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
 
-        dataset_test = torch.utils.data.Subset(dataset_test, indices[:10])
+        dataset_test = torch.utils.data.Subset(dataset_test, indices[:100])
         print(indices[:10])
         num_channels = 6
         batch_size = 6
@@ -628,7 +628,7 @@ def main():
 
     if args.test_only:
         print("Testing only")
-        evaluate(model, data_loader_test, device=device)
+        evaluate(model, data_loader_test, device=device, epoch=0)
         return
 
     for epoch in range(args.start_epoch, args.epochs):
@@ -654,7 +654,7 @@ def main():
                 output_dir, "checkpoint.pth"))
 
         # evaluate on the test dataset
-        evaluate(model, data_loader_test, device=device)
+        evaluate(model, data_loader_test, device=device, epoch=epoch)
 
     print("That's it!")
 
