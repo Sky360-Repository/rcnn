@@ -344,15 +344,15 @@ class PesmodOpticalFlowDataset(object):
         image_id = torch.tensor([idx])
 
         try:
-
+            boxes_tensor=torch.tensor(boxes)
             if num_objs == 0:
                 raise Exception(f"Found image with no objects: {idx}")
             elif num_objs == 1:
-                area = torch.tensor([(boxes[0][3] - boxes[0][1]) *
-                                     (boxes[0][2] - boxes[0][0])])
+                area = torch.tensor([(boxes_tensor[0][3] - boxes_tensor[0][1]) *
+                                     (boxes_tensor[0][2] - boxes_tensor[0][0])])
             else:
-                area = (boxes[:, 3] - boxes[:, 1]) * \
-                    (boxes[:, 2] - boxes[:, 0])
+                area = (boxes_tensor[:, 3] - boxes_tensor[:, 1]) * \
+                    (boxes_tensor[:, 2] - boxes_tensor[:, 0])
         except Exception as e:
             print(e)
             print(f"Boxes failed  {idx}:{boxes}")
@@ -402,10 +402,10 @@ class PesmodOpticalFlowDataset(object):
             imgs = seq_det.augment_images(imgs)
             bbs = seq_det.augment_bounding_boxes(bbs)
             bbs = bbs.remove_out_of_image().clip_out_of_image()
-            print(
-                f"merged after transform:[ {imgs[0].shape}, {imgs[1].shape} ]")
-            print(
-                f"optical max:{imgs[0].max()},mean:{imgs[0].mean()}, OF Max:{imgs[1].max()},mean:{imgs[1].mean()}")
+            #print(
+            #    f"merged after transform:[ {imgs[0].shape}, {imgs[1].shape} ]")
+            #print(
+            #    f"optical max:{imgs[0].max()},mean:{imgs[0].mean()}, OF Max:{imgs[1].max()},mean:{imgs[1].mean()}")
 
         #merged_tensor = np.moveaxis(merged_tensor, -1, 0)
 
@@ -505,21 +505,12 @@ def get_model(input_channels, classes):
 
 
 def get_transform(train):
-    return imgaug.augmenters.Sequential([
-        imgaug.augmenters.GaussianBlur(sigma=(0, 3.0)),
-        imgaug.augmenters.Affine(rotate=random.randint(0, 359))
-        # imgaug.augmenters.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
-        # imgaug.augmenters.Affine(
-        #    translate_px={"x": 40, "y": 60},
-        #    scale=(0.5, 0.7)
-        # )  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
-    ])
-#    transforms = []
-    # This is done in the loader now instead
-    #  transforms.append(T.ToTensor())
-#    if train:
-#        transforms.append(T.RandomHorizontalFlip(0.5))
-#    return T.Compose(transforms)
+    if train:
+        return imgaug.augmenters.Sequential([
+            imgaug.augmenters.GaussianBlur(sigma=(0, 3.0)),
+            imgaug.augmenters.Affine(rotate=random.randint(0, 359))])
+    else:
+        return imgaug.augmenters.Sequential([])
 
 
 def get_args_parser(add_help=True):
