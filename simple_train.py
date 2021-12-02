@@ -1,6 +1,7 @@
 # Sample code from the TorchVision 0.3 Object Detection Finetuning Tutorial
 # http://pytorch.org/tutorials/intermediate/torchvision_tutorial.html
 
+from torchvision import transforms
 from dense_optical_flow import DenseOpticalFlow
 import json
 from torchvision.models.detection.rpn import AnchorGenerator
@@ -369,23 +370,44 @@ class PesmodOpticalFlowDataset(object):
         target["iscrowd"] = iscrowd
         #print(f"target: {target}")
 
-        optical_tensor = torchvision.transforms.ToTensor()(optical_img)
-        optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
-        merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
+        #images are H_W_C
 
-        merged_tensor = np.moveaxis(merged_tensor.numpy(), 0, -1)
+        #optical_tensor = torchvision.transforms.ToTensor()(optical_img)
+        #optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
 
-        #print(f"merged: {merged_tensor.shape}")
+        #Tensors are C_H_W
+
+        #print(
+        #    f"optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
+
+        #merged_tensor_c_h_w = torch.cat(
+        #    (optical_tensor, optical_flow_tensor), 0)
+
+        #print(
+        #    f"merged_c_h_w: {merged_tensor_c_h_w.shape}")
+
+        #merged_tensor_c_h_w = torch.moveaxis(merged_tensor_h_w_c, -1, 0)
+
+        #print(
+        #    f"merged_c_h_w: {merged_tensor_c_h_w.shape}, optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
+        w, h = optical_img.size
 
         bbs = imgaug.BoundingBoxesOnImage.from_xyxy_array(
-            boxes, merged_tensor.shape)
+            boxes, (h, w, 3))
+
+        imgs = [np.array(optical_img), np.array(optical_flow_img)]
 
         if self.transforms is not None:
-            merged_tensor, bbs = self.transforms(
-                image=merged_tensor, bounding_boxes=bbs)
-            bbs.remove_out_of_image().clip_out_of_image()
-        #print(f"merged after: {merged_tensor.shape}")
-        merged_tensor = np.moveaxis(merged_tensor, -1, 0)
+            seq_det = self.transforms.to_deterministic()
+            imgs = seq_det.augment_images(imgs)
+            bbs = seq_det.augment_bounding_boxes(bbs)
+            bbs = bbs.remove_out_of_image().clip_out_of_image()
+            print(
+                f"merged after transform:[ {imgs[0].shape}, {imgs[1].shape} ]")
+            print(
+                f"optical max:{imgs[0].max()},mean:{imgs[0].mean()}, OF Max:{imgs[1].max()},mean:{imgs[1].mean()}")
+
+        #merged_tensor = np.moveaxis(merged_tensor, -1, 0)
 
         target_boxes = imgaug.BoundingBoxesOnImage.to_xyxy_array(bbs)
         target['boxes'] = torch.as_tensor(target_boxes, dtype=torch.float32)
@@ -396,8 +418,11 @@ class PesmodOpticalFlowDataset(object):
 #         [0.0627, 0.0627, 0.0980,  ..., 0.6353, 0.4510, 0.3608],
         #print(f"Merged {merged_tensor}")
 
+        optical_tensor = torchvision.transforms.ToTensor()(imgs[0])
+        optical_flow_tensor = torchvision.transforms.ToTensor()(imgs[1])
+        merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
-        ret = (torch.as_tensor(merged_tensor, dtype=torch.float32), target)
+        ret = (merged_tensor, target)
         #self.cache[idx] = ret
         return ret
 
