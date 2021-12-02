@@ -5,6 +5,7 @@ from dense_optical_flow import DenseOpticalFlow
 import json
 from torchvision.models.detection.rpn import AnchorGenerator
 import os
+import random
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
@@ -371,15 +372,20 @@ class PesmodOpticalFlowDataset(object):
         optical_tensor = torchvision.transforms.ToTensor()(optical_img)
         optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
-        # print(merged_tensor)
+
+        merged_tensor = np.moveaxis(merged_tensor.numpy(), 0, -1)
+
+        print(f"merged: {merged_tensor.shape}")
 
         bbs = imgaug.BoundingBoxesOnImage.from_xyxy_array(
             boxes, merged_tensor.shape)
 
-        #merged_tensor = np.moveaxis(merged_tensor, 0, -1)
         if self.transforms is not None:
-            merged_tensor, bbs = self.transforms(images=merged_tensor.numpy(), bounding_boxes=bbs)
+            merged_tensor, bbs = self.transforms(
+                image=merged_tensor, bounding_boxes=bbs)
             bbs.remove_out_of_image().clip_out_of_image()
+        print(f"merged after: {merged_tensor.shape}")
+        merged_tensor = np.moveaxis(merged_tensor, -1, 0)
 
         target_boxes = imgaug.BoundingBoxesOnImage.to_xyxy_array(bbs)
         target['boxes'] = torch.as_tensor(target_boxes, dtype=torch.float32)
@@ -476,12 +482,12 @@ def get_model(input_channels, classes):
 def get_transform(train):
     return imgaug.augmenters.Sequential([
         imgaug.augmenters.GaussianBlur(sigma=(0, 3.0)),
-        imgaug.augmenters.Affine(rotate=imgaug.parameters.Normal(0.0, 30))
-        #imgaug.augmenters.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
-        #imgaug.augmenters.Affine(
+        imgaug.augmenters.Affine(rotate=random.randint(0, 359))
+        # imgaug.augmenters.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
+        # imgaug.augmenters.Affine(
         #    translate_px={"x": 40, "y": 60},
         #    scale=(0.5, 0.7)
-        #)  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
+        # )  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
     ])
 #    transforms = []
     # This is done in the loader now instead
