@@ -375,7 +375,7 @@ class PesmodOpticalFlowDataset(object):
 
         merged_tensor = np.moveaxis(merged_tensor.numpy(), 0, -1)
 
-        print(f"merged: {merged_tensor.shape}")
+        #print(f"merged: {merged_tensor.shape}")
 
         bbs = imgaug.BoundingBoxesOnImage.from_xyxy_array(
             boxes, merged_tensor.shape)
@@ -384,7 +384,7 @@ class PesmodOpticalFlowDataset(object):
             merged_tensor, bbs = self.transforms(
                 image=merged_tensor, bounding_boxes=bbs)
             bbs.remove_out_of_image().clip_out_of_image()
-        print(f"merged after: {merged_tensor.shape}")
+        #print(f"merged after: {merged_tensor.shape}")
         merged_tensor = np.moveaxis(merged_tensor, -1, 0)
 
         target_boxes = imgaug.BoundingBoxesOnImage.to_xyxy_array(bbs)
@@ -397,7 +397,7 @@ class PesmodOpticalFlowDataset(object):
         #print(f"Merged {merged_tensor}")
 
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
-        ret = (merged_tensor, target)
+        ret = (torch.as_tensor(merged_tensor, dtype=torch.float32), target)
         #self.cache[idx] = ret
         return ret
 
