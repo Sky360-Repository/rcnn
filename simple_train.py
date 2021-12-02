@@ -9,6 +9,9 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
+import imgaug
+from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
+
 import torchvision
 
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -332,9 +335,6 @@ class PesmodOpticalFlowDataset(object):
             assert ymax > ymin
             boxes.append([xmin, ymin, xmax, ymax])
         num_objs = len(boxes)
-        #print(f"loaded boxes {self.xmls[idx]}:{idx}: {boxes}")
-
-        boxes = torch.as_tensor(boxes, dtype=torch.float32)
 
         # there is only one class
         labels = torch.ones((num_objs,), dtype=torch.int64)
@@ -345,8 +345,6 @@ class PesmodOpticalFlowDataset(object):
 
             if num_objs == 0:
                 raise Exception(f"Found image with no objects: {idx}")
-                boxes = torch.zeros((0, 4), dtype=torch.float32)
-                area = torch.tensor([0])
             elif num_objs == 1:
                 area = torch.tensor([(boxes[0][3] - boxes[0][1]) *
                                      (boxes[0][2] - boxes[0][0])])
@@ -364,7 +362,6 @@ class PesmodOpticalFlowDataset(object):
         iscrowd = torch.zeros((num_objs,), dtype=torch.int64)
 
         target = {}
-        target["boxes"] = boxes
         target["labels"] = labels
         target["image_id"] = image_id
         target["area"] = area
@@ -375,8 +372,17 @@ class PesmodOpticalFlowDataset(object):
         optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
         # print(merged_tensor)
+
+        bbs = imgaug.BoundingBoxesOnImage.from_xyxy_array(
+            boxes, merged_tensor.shape)
+
+        #merged_tensor = np.moveaxis(merged_tensor, 0, -1)
         if self.transforms is not None:
-            merged_tensor, target = self.transforms(merged_tensor, target)
+            merged_tensor, bbs = self.transforms(images=merged_tensor.numpy(), bounding_boxes=bbs)
+            bbs.remove_out_of_image().clip_out_of_image()
+
+        target_boxes = imgaug.BoundingBoxesOnImage.to_xyxy_array(bbs)
+        target['boxes'] = torch.as_tensor(target_boxes, dtype=torch.float32)
 
 
 # image: tensor([[[0.0627, 0.0314, 0.1098,  ..., 0.8157, 0.8314, 0.8471],
@@ -468,12 +474,21 @@ def get_model(input_channels, classes):
 
 
 def get_transform(train):
-    transforms = []
+    return imgaug.augmenters.Sequential([
+        imgaug.augmenters.GaussianBlur(sigma=(0, 3.0)),
+        imgaug.augmenters.Affine(rotate=imgaug.parameters.Normal(0.0, 30))
+        #imgaug.augmenters.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
+        #imgaug.augmenters.Affine(
+        #    translate_px={"x": 40, "y": 60},
+        #    scale=(0.5, 0.7)
+        #)  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
+    ])
+#    transforms = []
     # This is done in the loader now instead
     #  transforms.append(T.ToTensor())
-    if train:
-        transforms.append(T.RandomHorizontalFlip(0.5))
-    return T.Compose(transforms)
+#    if train:
+#        transforms.append(T.RandomHorizontalFlip(0.5))
+#    return T.Compose(transforms)
 
 
 def get_args_parser(add_help=True):
@@ -544,8 +559,8 @@ def main():
     if dataset_name == 'stf':
         dataset_test = STFOpticalFlowDataset(
             '../simpletracker/output/2021_11_26-06_18_02_PM/video_000000/',
-            #'../simpletracker/output/2021_11_26-07_18_24_PM/birds_and_plane_000000/',
-            #'../simpletracker/output/2021_11_26-08_16_29_PM/Test_Trimmed_000000/',
+            # '../simpletracker/output/2021_11_26-07_18_24_PM/birds_and_plane_000000/',
+            # '../simpletracker/output/2021_11_26-08_16_29_PM/Test_Trimmed_000000/',
             get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
         dataset_test = torch.utils.data.Subset(dataset_test, indices[:10])
