@@ -391,13 +391,13 @@ class PesmodOpticalFlowDataset(object):
         # #Tensors are C_H_W and are scaled (div 255), but not normalized
         optical_tensor = torchvision.transforms.ToTensor()(imgs[0])
         optical_flow_tensor = torchvision.transforms.ToTensor()(imgs[1])
-        #print(
+        # print(
         #    f"optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
 
         self.update_stats('optical', optical_tensor)
         self.update_stats('optical_flow', optical_flow_tensor)
-        #self.print_stats('optical')
-        #self.print_stats('optical_flow')
+        # self.print_stats('optical')
+        # self.print_stats('optical_flow')
 
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
@@ -427,7 +427,6 @@ class PesmodOpticalFlowDataset(object):
         total_std = torch.sqrt(total_var)
         print(
             f"{img_name} stats, mean:{total_mean}, std:{total_std}")
-
 
     def __len__(self):
         return len(self.imgs)
@@ -477,8 +476,8 @@ def get_fasterrcnn_model2(input_channels, num_classes):
         image_mean = [0.485, 0.456, 0.406]
         image_std = [0.229, 0.224, 0.225]
     elif input_channels == 6:
-        #optical stats, mean: tensor([0.3407, 0.3538, 0.3668]), std: tensor([0.2424, 0.2450, 0.2402])
-        #optical_flow stats, mean: tensor([0.1372, 0.2718, 0.0078]), std: tensor([0.2668, 0.4377, 0.0441])
+        # optical stats, mean: tensor([0.3407, 0.3538, 0.3668]), std: tensor([0.2424, 0.2450, 0.2402])
+        # optical_flow stats, mean: tensor([0.1372, 0.2718, 0.0078]), std: tensor([0.2668, 0.4377, 0.0441])
         image_mean = [0.3407, 0.3538, 0.3668, 0.1372, 0.2718, 0.0078]
         image_std = [0.2424, 0.2450, 0.2402, 0.2668, 0.4377, 0.0441]
 # Defaults
@@ -512,33 +511,32 @@ def get_model(input_channels, classes):
     return model
 
 
-
 def get_transform(train):
-    def sometimes(aug): return imgaug.augmenters.Sometimes(0.5, aug)
+    def sometimes(aug): return imgaug.augmenters.Sometimes(0.75, aug)
     if train:
         return imgaug.augmenters.Sequential([
             sometimes(imgaug.augmenters.Crop(percent=(0, 0.1))),
             sometimes(imgaug.augmenters.Affine(
                 scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
-                translate_percent={"x": (-0.2, 0.2), "y": (-0.2, 0.2)},
                 rotate=random.randint(0, 359)),
             ),
-            imgaug.augmenters.SomeOf((0, 5),
-                       [
-            imgaug.augmenters.OneOf([
-                imgaug.augmenters.GaussianBlur((0, 3.0)),
-                imgaug.augmenters.AverageBlur(k=(2, 7)),
-                imgaug.augmenters.MedianBlur(k=(3, 11)),
-            ]),
-            imgaug.augmenters.OneOf([
-                imgaug.augmenters.Dropout((0.01, 0.1), per_channel=0.5),
-                imgaug.augmenters.CoarseDropout(
-                    (0.03, 0.15), size_percent=(0.02, 0.05),
-                    per_channel=0.2
-                ),
-            ])],random_order=True)
-
-        ],random_order=True)
+            imgaug.augmenters.SomeOf(
+                (0, 5),
+                [
+                    imgaug.augmenters.OneOf([
+                        imgaug.augmenters.GaussianBlur((0, 3.0)),
+                        imgaug.augmenters.AverageBlur(k=(2, 7)),
+                        imgaug.augmenters.MedianBlur(k=(3, 11)),
+                    ]),
+                    imgaug.augmenters.OneOf([
+                        imgaug.augmenters.Dropout(
+                            (0.01, 0.1), per_channel=0.5),
+                        imgaug.augmenters.CoarseDropout(
+                            (0.03, 0.15), size_percent=(0.02, 0.05),
+                            per_channel=0.2),
+                    ]
+                    )], random_order=True)
+        ], random_order=True)
     else:
         return imgaug.augmenters.Sequential([])
 
