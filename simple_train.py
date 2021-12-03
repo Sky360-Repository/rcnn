@@ -240,6 +240,9 @@ class PesmodOpticalFlowDataset(object):
             self.root, self.xmls)
         self.filter_no_identifications()
         self.cache = {}
+        self.stats = {}
+        self.init_stats('optical')
+        self.init_stats('optical_flow')
 
     def filter_no_identifications(self):
         print("Filtering")
@@ -257,7 +260,7 @@ class PesmodOpticalFlowDataset(object):
                 count += 1
             # print(f"{xml}:{count}")
             if count > 0:
-                print(f"Adding {img} with {count}")
+                print(f"Adding {img} with {count} boxes at {len(new_imgs)}")
                 new_imgs.append(img)
                 new_of_imgs.append(of_img)
                 new_xmls.append(xml)
@@ -301,15 +304,11 @@ class PesmodOpticalFlowDataset(object):
         return vars
 
     def __getitem__(self, idx):
-        # load images and masks
-        #print(f"Loading item {idx}")
-        #cached_item = self.cache.get(idx, None)
-        # if cached_item:
-        #    return cached_item
-
         img_path = os.path.join(self.root, "images", self.imgs[idx])
         optical_flow_path = os.path.join(
             self.root, "optical_flow", self.optical_flow_imgs[idx])
+
+        # Images are H_W_C
         optical_img = Image.open(img_path)
         optical_flow_img = Image.open(optical_flow_path).convert('HSV')
 
@@ -345,7 +344,7 @@ class PesmodOpticalFlowDataset(object):
         image_id = torch.tensor([idx])
 
         try:
-            boxes_tensor=torch.tensor(boxes)
+            boxes_tensor = torch.tensor(boxes)
             if num_objs == 0:
                 raise Exception(f"Found image with no objects: {idx}")
             elif num_objs == 1:
@@ -381,24 +380,54 @@ class PesmodOpticalFlowDataset(object):
             imgs = seq_det.augment_images(imgs)
             bbs = seq_det.augment_bounding_boxes(bbs)
             bbs = bbs.remove_out_of_image().clip_out_of_image()
-            #print(
+            # print(
             #    f"merged after transform:[ {imgs[0].shape}, {imgs[1].shape} ]")
-            #print(
+            # print(
             #    f"optical max:{imgs[0].max()},mean:{imgs[0].mean()}, OF Max:{imgs[1].max()},mean:{imgs[1].mean()}")
 
         target_boxes = imgaug.BoundingBoxesOnImage.to_xyxy_array(bbs)
         target['boxes'] = torch.as_tensor(target_boxes, dtype=torch.float32)
 
-        # scales (div 255), but doesn't normalize
+        # #Tensors are C_H_W and are scaled (div 255), but not normalized
         optical_tensor = torchvision.transforms.ToTensor()(imgs[0])
         optical_flow_tensor = torchvision.transforms.ToTensor()(imgs[1])
-        print(
-            f"optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
+        #print(
+        #    f"optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
+
+        self.update_stats('optical', optical_tensor)
+        self.update_stats('optical_flow', optical_flow_tensor)
+        #self.print_stats('optical')
+        #self.print_stats('optical_flow')
+
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
         ret = (merged_tensor, target)
         #self.cache[idx] = ret
         return ret
+
+    def init_stats(self, img_name):
+        self.stats[img_name] = {
+            'psum': torch.tensor([0.0, 0.0, 0.0]),
+            'psum_sq': torch.tensor([0.0, 0.0, 0.0]),
+            'pixel_count': 0
+        }
+
+    def update_stats(self, img_name, tensor):
+        _, height, width = tensor.shape
+        #print(f"update stats tensor size: {tensor.shape}")
+        self.stats[img_name]['psum'] += tensor.sum(axis=[1, 2])
+        self.stats[img_name]['psum_sq'] += (tensor**2).sum(axis=[1, 2])
+        self.stats[img_name]['pixel_count'] += width*height
+
+    def print_stats(self, img_name):
+        count = self.stats[img_name]['pixel_count']
+        total_mean = self.stats[img_name]['psum'] / count
+        total_var = (self.stats[img_name]['psum_sq'] /
+                     count) - (total_mean ** 2)
+        total_std = torch.sqrt(total_var)
+        print(
+            f"{img_name} stats, mean:{total_mean}, std:{total_std}")
+
 
     def __len__(self):
         return len(self.imgs)
@@ -448,8 +477,13 @@ def get_fasterrcnn_model2(input_channels, num_classes):
         image_mean = [0.485, 0.456, 0.406]
         image_std = [0.229, 0.224, 0.225]
     elif input_channels == 6:
-        image_mean = [0.485, 0.456, 0.406, 0.485, 0.456, 0.406]
-        image_std = [0.229, 0.224, 0.225, 0.229, 0.224, 0.225]
+        #optical stats, mean: tensor([0.3407, 0.3538, 0.3668]), std: tensor([0.2424, 0.2450, 0.2402])
+        #optical_flow stats, mean: tensor([0.1372, 0.2718, 0.0078]), std: tensor([0.2668, 0.4377, 0.0441])
+        image_mean = [0.3407, 0.3538, 0.3668, 0.1372, 0.2718, 0.0078]
+        image_std = [0.2424, 0.2450, 0.2402, 0.2668, 0.4377, 0.0441]
+# Defaults
+#        image_mean = [0.485, 0.456, 0.406, 0.485, 0.456, 0.406]
+#        image_std = [0.229, 0.224, 0.225, 0.229, 0.224, 0.225]
 
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         pretrained=False,
@@ -478,11 +512,33 @@ def get_model(input_channels, classes):
     return model
 
 
+
 def get_transform(train):
+    def sometimes(aug): return imgaug.augmenters.Sometimes(0.5, aug)
     if train:
         return imgaug.augmenters.Sequential([
-            imgaug.augmenters.GaussianBlur(sigma=(0, 3.0)),
-            imgaug.augmenters.Affine(rotate=random.randint(0, 359))])
+            sometimes(imgaug.augmenters.Crop(percent=(0, 0.1))),
+            sometimes(imgaug.augmenters.Affine(
+                scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
+                translate_percent={"x": (-0.2, 0.2), "y": (-0.2, 0.2)},
+                rotate=random.randint(0, 359)),
+            ),
+            imgaug.augmenters.SomeOf((0, 5),
+                       [
+            imgaug.augmenters.OneOf([
+                imgaug.augmenters.GaussianBlur((0, 3.0)),
+                imgaug.augmenters.AverageBlur(k=(2, 7)),
+                imgaug.augmenters.MedianBlur(k=(3, 11)),
+            ]),
+            imgaug.augmenters.OneOf([
+                imgaug.augmenters.Dropout((0.01, 0.1), per_channel=0.5),
+                imgaug.augmenters.CoarseDropout(
+                    (0.03, 0.15), size_percent=(0.02, 0.05),
+                    per_channel=0.2
+                ),
+            ])],random_order=True)
+
+        ],random_order=True)
     else:
         return imgaug.augmenters.Sequential([])
 
@@ -580,7 +636,7 @@ def main():
         dataset = PesmodOpticalFlowDataset(
             os.path.join('INPUT', 'train'), get_transform(train=True))
         dataset_test = PesmodOpticalFlowDataset(
-            os.path.join('INPUT', 'test'), get_transform(train=False))
+            os.path.join('INPUT', 'train'), get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
 
         dataset_test = torch.utils.data.Subset(dataset_test, indices[:100])
