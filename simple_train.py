@@ -257,6 +257,7 @@ class PesmodOpticalFlowDataset(object):
                 count += 1
             # print(f"{xml}:{count}")
             if count > 0:
+                print(f"Adding {img} with {count}")
                 new_imgs.append(img)
                 new_of_imgs.append(of_img)
                 new_xmls.append(xml)
@@ -355,7 +356,7 @@ class PesmodOpticalFlowDataset(object):
                     (boxes[:, 2] - boxes[:, 0])
         except Exception as e:
             print(e)
-            print(f"Boxes failed  {idx}:{boxes}")
+            print(f"Boxes failed  {self.imgs[idx]}:{boxes}")
             import sys
             sys.stdout.flush()
             sys.exit(1)
@@ -368,30 +369,8 @@ class PesmodOpticalFlowDataset(object):
         target["image_id"] = image_id
         target["area"] = area
         target["iscrowd"] = iscrowd
-        #print(f"target: {target}")
 
-        #images are H_W_C
-
-        #optical_tensor = torchvision.transforms.ToTensor()(optical_img)
-        #optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
-
-        #Tensors are C_H_W
-
-        #print(
-        #    f"optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
-
-        #merged_tensor_c_h_w = torch.cat(
-        #    (optical_tensor, optical_flow_tensor), 0)
-
-        #print(
-        #    f"merged_c_h_w: {merged_tensor_c_h_w.shape}")
-
-        #merged_tensor_c_h_w = torch.moveaxis(merged_tensor_h_w_c, -1, 0)
-
-        #print(
-        #    f"merged_c_h_w: {merged_tensor_c_h_w.shape}, optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
         w, h = optical_img.size
-
         bbs = imgaug.BoundingBoxesOnImage.from_xyxy_array(
             boxes, (h, w, 3))
 
@@ -407,19 +386,14 @@ class PesmodOpticalFlowDataset(object):
             print(
                 f"optical max:{imgs[0].max()},mean:{imgs[0].mean()}, OF Max:{imgs[1].max()},mean:{imgs[1].mean()}")
 
-        #merged_tensor = np.moveaxis(merged_tensor, -1, 0)
-
         target_boxes = imgaug.BoundingBoxesOnImage.to_xyxy_array(bbs)
         target['boxes'] = torch.as_tensor(target_boxes, dtype=torch.float32)
 
-
-# image: tensor([[[0.0627, 0.0314, 0.1098,  ..., 0.8157, 0.8314, 0.8471],
-#         [0.0510, 0.0353, 0.0941,  ..., 0.7922, 0.7765, 0.8235],
-#         [0.0627, 0.0627, 0.0980,  ..., 0.6353, 0.4510, 0.3608],
-        #print(f"Merged {merged_tensor}")
-
+        # scales (div 255), but doesn't normalize
         optical_tensor = torchvision.transforms.ToTensor()(imgs[0])
         optical_flow_tensor = torchvision.transforms.ToTensor()(imgs[1])
+        print(
+            f"optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
         ret = (merged_tensor, target)
