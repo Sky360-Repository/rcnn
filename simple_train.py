@@ -515,7 +515,7 @@ def get_transform(train):
     def sometimes(aug): return imgaug.augmenters.Sometimes(0.75, aug)
     if train:
         return imgaug.augmenters.Sequential([
-            sometimes(imgaug.augmenters.Crop(percent=(0, 0.1))),
+            #sometimes(imgaug.augmenters.Crop(percent=(0, 0.1))),
             sometimes(imgaug.augmenters.Affine(
                 scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
                 rotate=random.randint(0, 359)),
