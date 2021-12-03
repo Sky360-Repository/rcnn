@@ -511,32 +511,37 @@ def get_model(input_channels, classes):
     return model
 
 
-def get_transform(train):
+def get_long_transform():
     def sometimes(aug): return imgaug.augmenters.Sometimes(0.75, aug)
+    return imgaug.augmenters.Sequential([
+        sometimes(imgaug.augmenters.Affine(
+            scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
+            rotate=random.randint(0, 359)),
+        ),
+        imgaug.augmenters.SomeOf(
+            (0, 5),
+            [
+                imgaug.augmenters.OneOf([
+                    imgaug.augmenters.GaussianBlur((0, 3.0)),
+                    imgaug.augmenters.AverageBlur(k=(2, 7)),
+                    imgaug.augmenters.MedianBlur(k=(3, 11)),
+                ]),
+                imgaug.augmenters.OneOf([
+                    imgaug.augmenters.Dropout(
+                        (0.01, 0.1), per_channel=0.5),
+                    imgaug.augmenters.CoarseDropout(
+                        (0.03, 0.15), size_percent=(0.02, 0.05),
+                        per_channel=0.2),
+                ]
+                )], random_order=True)
+    ], random_order=True)
+
+
+def get_transform(train):
     if train:
         return imgaug.augmenters.Sequential([
-            #sometimes(imgaug.augmenters.Crop(percent=(0, 0.1))),
-            sometimes(imgaug.augmenters.Affine(
-                scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
-                rotate=random.randint(0, 359)),
-            ),
-            imgaug.augmenters.SomeOf(
-                (0, 5),
-                [
-                    imgaug.augmenters.OneOf([
-                        imgaug.augmenters.GaussianBlur((0, 3.0)),
-                        imgaug.augmenters.AverageBlur(k=(2, 7)),
-                        imgaug.augmenters.MedianBlur(k=(3, 11)),
-                    ]),
-                    imgaug.augmenters.OneOf([
-                        imgaug.augmenters.Dropout(
-                            (0.01, 0.1), per_channel=0.5),
-                        imgaug.augmenters.CoarseDropout(
-                            (0.03, 0.15), size_percent=(0.02, 0.05),
-                            per_channel=0.2),
-                    ]
-                    )], random_order=True)
-        ], random_order=True)
+            imgaug.augmenters.GaussianBlur(sigma=(0, 3.0)),
+            imgaug.augmenters.Affine(rotate=random.randint(0, 359))])
     else:
         return imgaug.augmenters.Sequential([])
 
