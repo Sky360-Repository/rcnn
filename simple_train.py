@@ -646,11 +646,11 @@ def main():
 
     if not args.test_only:
         data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=4,
+            dataset, batch_size=batch_size, shuffle=True, num_workers=8,
             collate_fn=utils.collate_fn)
 
     data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=1, shuffle=False, num_workers=4,
+        dataset_test, batch_size=1, shuffle=False, num_workers=8,
         collate_fn=utils.collate_fn)
 
     model = get_fasterrcnn_model2(num_channels, 2)
