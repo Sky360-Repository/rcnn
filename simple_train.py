@@ -1,10 +1,7 @@
 # Sample code from the TorchVision 0.3 Object Detection Finetuning Tutorial
 # http://pytorch.org/tutorials/intermediate/torchvision_tutorial.html
 
-from torchvision import transforms
-from dense_optical_flow import DenseOpticalFlow
 import json
-from torchvision.models.detection.rpn import AnchorGenerator
 import os
 import random
 import numpy as np
@@ -12,22 +9,16 @@ import torch
 from PIL import Image, ImageDraw
 
 import imgaug
-from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 
 import torchvision
 
-from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
-
 from engine import train_one_epoch, evaluate
 import utils
-import transforms as T
 
 import xml.etree.ElementTree as ET  # elementpath
 
-import matplotlib.pyplot as plt
-
 from torch.utils.tensorboard import SummaryWriter
+from model import Model
 
 
 class PennFudanDataset(object):
@@ -432,85 +423,6 @@ class PesmodOpticalFlowDataset(object):
         return len(self.imgs)
 
 
-def get_model_instance_segmentation(num_classes):
-    # load an instance segmentation model pre-trained pre-trained on COCO
-    model = torchvision.models.detection.maskrcnn_resnet50_fpn(
-        pretrained=False)
-
-    # get number of input features for the classifier
-
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-    # replace the pre-trained head with a new one
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
-    # now get the number of input features for the mask classifier
-    in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
-    hidden_layer = 256
-    # and replace the mask predictor with a new one
-    model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask,
-                                                       hidden_layer,
-                                                       num_classes)
-
-    return model
-
-
-def get_fasterrcnn_model2(input_channels, num_classes):
-
-    # fasterrcnn_mobilenet_v3_large_fpn
-
-    # Default is ((32,), (64,), (128,), (256,), (512,))
-    anchor_sizes = ((2), (4), (8), (16), (32))
-
-    # Default: ((0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0))
-    #aspect_ratios = ((0.5), (1.0), (1.5), (2.0))
-    aspect_ratios = ((0.5, 1.0, 1.5), (0.5, 1.0, 1.5),
-                     (0.5, 1.0, 1.5), (0.5, 1.0, 1.5),
-                     (0.5, 1.0, 1.5))
-
-    anchor_generator = AnchorGenerator(
-        sizes=anchor_sizes, aspect_ratios=aspect_ratios)
-    print(f"sizes: {anchor_sizes}")
-    print(f"ratios: {aspect_ratios}")
-
-    if input_channels == 3:
-        image_mean = [0.485, 0.456, 0.406]
-        image_std = [0.229, 0.224, 0.225]
-    elif input_channels == 6:
-        # optical stats, mean: tensor([0.3407, 0.3538, 0.3668]), std: tensor([0.2424, 0.2450, 0.2402])
-        # optical_flow stats, mean: tensor([0.1372, 0.2718, 0.0078]), std: tensor([0.2668, 0.4377, 0.0441])
-        image_mean = [0.3407, 0.3538, 0.3668, 0.1372, 0.2718, 0.0078]
-        image_std = [0.2424, 0.2450, 0.2402, 0.2668, 0.4377, 0.0441]
-# Defaults
-#        image_mean = [0.485, 0.456, 0.406, 0.485, 0.456, 0.406]
-#        image_std = [0.229, 0.224, 0.225, 0.229, 0.224, 0.225]
-
-    model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
-        pretrained=False,
-        image_mean=image_mean,
-        image_std=image_std,
-        rpn_anchor_generator=anchor_generator,
-        min_size=1080,
-        max_size=2048)
-
-    # get number of input features for the classifier
-
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-    # replace the pre-trained head with a new one
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
-    model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
-                                                stride=2, padding=3, bias=False)
-
-    return model
-
-
-def get_model(input_channels, classes):
-    model = get_model_instance_segmentation(classes)
-    model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
-                                                stride=2, padding=3, bias=False)
-    return model
-
-
 def get_long_transform():
     def sometimes(aug): return imgaug.augmenters.Sometimes(0.75, aug)
     return imgaug.augmenters.Sequential([
@@ -656,15 +568,12 @@ def main():
         dataset_test, batch_size=1, shuffle=False, num_workers=8,
         collate_fn=utils.collate_fn)
 
-    model = get_fasterrcnn_model2(num_channels, 2)
+    model = Model(num_channels, 2)
 
     #write_to_tb(data_loader, model)
 
-    # move model to the right device
-    model.to(device)
-
     # construct an optimizer
-    params = [p for p in model.parameters() if p.requires_grad]
+    params = [p for p in model.get_model().parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=0.005,
                                 momentum=0.9, weight_decay=0.0005)
     # and a learning rate scheduler
@@ -680,7 +589,7 @@ def main():
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(checkpoint["model"])
+        model.resume(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         args.start_epoch = checkpoint["epoch"] + 1
@@ -689,19 +598,19 @@ def main():
 
     if args.test_only:
         print("Testing only")
-        evaluate(model, data_loader_test, device=device, epoch=0)
+        evaluate(model.get_model(), data_loader_test, device=device, epoch=0)
         return
 
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch, printing every 10 iterations
-        train_one_epoch(model, optimizer, data_loader,
+        train_one_epoch(model.get_model(), optimizer, data_loader,
                         device, epoch, 10, scaler)
         # update the learning rate
         lr_scheduler.step()
 
         if output_dir:
             checkpoint = {
-                "model": model.state_dict(),
+                "model": model.get_model().state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": lr_scheduler.state_dict(),
                 "args": {},
@@ -715,7 +624,8 @@ def main():
                 output_dir, "checkpoint.pth"))
 
         # evaluate on the test dataset
-        evaluate(model, data_loader_test, device=device, epoch=epoch)
+        evaluate(model.get_model(), data_loader_test,
+                 device=device, epoch=epoch)
 
     print("That's it!")
 
