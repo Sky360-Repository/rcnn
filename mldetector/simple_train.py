@@ -1,28 +1,24 @@
 # Sample code from the TorchVision 0.3 Object Detection Finetuning Tutorial
 # http://pytorch.org/tutorials/intermediate/torchvision_tutorial.html
 
-from dense_optical_flow import DenseOpticalFlow
 import json
-from torchvision.models.detection.rpn import AnchorGenerator
 import os
+import random
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-import torchvision
+import imgaug
 
-from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
+import torchvision
 
 from engine import train_one_epoch, evaluate
 import utils
-import transforms as T
 
 import xml.etree.ElementTree as ET  # elementpath
 
-import matplotlib.pyplot as plt
-
 from torch.utils.tensorboard import SummaryWriter
+from model import Model
 
 
 class PennFudanDataset(object):
@@ -235,6 +231,9 @@ class PesmodOpticalFlowDataset(object):
             self.root, self.xmls)
         self.filter_no_identifications()
         self.cache = {}
+        self.stats = {}
+        self.init_stats('optical')
+        self.init_stats('optical_flow')
 
     def filter_no_identifications(self):
         print("Filtering")
@@ -252,6 +251,7 @@ class PesmodOpticalFlowDataset(object):
                 count += 1
             # print(f"{xml}:{count}")
             if count > 0:
+                print(f"Adding {img} with {count} boxes at {len(new_imgs)}")
                 new_imgs.append(img)
                 new_of_imgs.append(of_img)
                 new_xmls.append(xml)
@@ -295,15 +295,11 @@ class PesmodOpticalFlowDataset(object):
         return vars
 
     def __getitem__(self, idx):
-        # load images and masks
-        #print(f"Loading item {idx}")
-        #cached_item = self.cache.get(idx, None)
-        # if cached_item:
-        #    return cached_item
-
         img_path = os.path.join(self.root, "images", self.imgs[idx])
         optical_flow_path = os.path.join(
             self.root, "optical_flow", self.optical_flow_imgs[idx])
+
+        # Images are H_W_C
         optical_img = Image.open(img_path)
         optical_flow_img = Image.open(optical_flow_path).convert('HSV')
 
@@ -332,9 +328,6 @@ class PesmodOpticalFlowDataset(object):
             assert ymax > ymin
             boxes.append([xmin, ymin, xmax, ymax])
         num_objs = len(boxes)
-        #print(f"loaded boxes {self.xmls[idx]}:{idx}: {boxes}")
-
-        boxes = torch.as_tensor(boxes, dtype=torch.float32)
 
         # there is only one class
         labels = torch.ones((num_objs,), dtype=torch.int64)
@@ -342,20 +335,18 @@ class PesmodOpticalFlowDataset(object):
         image_id = torch.tensor([idx])
 
         try:
-
+            boxes_tensor = torch.tensor(boxes)
             if num_objs == 0:
                 raise Exception(f"Found image with no objects: {idx}")
-                boxes = torch.zeros((0, 4), dtype=torch.float32)
-                area = torch.tensor([0])
             elif num_objs == 1:
-                area = torch.tensor([(boxes[0][3] - boxes[0][1]) *
-                                     (boxes[0][2] - boxes[0][0])])
+                area = torch.tensor([(boxes_tensor[0][3] - boxes_tensor[0][1]) *
+                                     (boxes_tensor[0][2] - boxes_tensor[0][0])])
             else:
-                area = (boxes[:, 3] - boxes[:, 1]) * \
-                    (boxes[:, 2] - boxes[:, 0])
+                area = (boxes_tensor[:, 3] - boxes_tensor[:, 1]) * \
+                    (boxes_tensor[:, 2] - boxes_tensor[:, 0])
         except Exception as e:
             print(e)
-            print(f"Boxes failed  {idx}:{boxes}")
+            print(f"Boxes failed  {self.imgs[idx]}:{boxes}")
             import sys
             sys.stdout.flush()
             sys.exit(1)
@@ -364,116 +355,107 @@ class PesmodOpticalFlowDataset(object):
         iscrowd = torch.zeros((num_objs,), dtype=torch.int64)
 
         target = {}
-        target["boxes"] = boxes
         target["labels"] = labels
         target["image_id"] = image_id
         target["area"] = area
         target["iscrowd"] = iscrowd
-        #print(f"target: {target}")
 
-        optical_tensor = torchvision.transforms.ToTensor()(optical_img)
-        optical_flow_tensor = torchvision.transforms.ToTensor()(optical_flow_img)
-        merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
-        # print(merged_tensor)
+        w, h = optical_img.size
+        bbs = imgaug.BoundingBoxesOnImage.from_xyxy_array(
+            boxes, (h, w, 3))
+
+        imgs = [np.array(optical_img), np.array(optical_flow_img)]
+
         if self.transforms is not None:
-            merged_tensor, target = self.transforms(merged_tensor, target)
+            seq_det = self.transforms.to_deterministic()
+            imgs = seq_det.augment_images(imgs)
+            bbs = seq_det.augment_bounding_boxes(bbs)
+            bbs = bbs.remove_out_of_image().clip_out_of_image()
+            # print(
+            #    f"merged after transform:[ {imgs[0].shape}, {imgs[1].shape} ]")
+            # print(
+            #    f"optical max:{imgs[0].max()},mean:{imgs[0].mean()}, OF Max:{imgs[1].max()},mean:{imgs[1].mean()}")
 
+        target_boxes = imgaug.BoundingBoxesOnImage.to_xyxy_array(bbs)
+        target['boxes'] = torch.as_tensor(target_boxes, dtype=torch.float32)
 
-# image: tensor([[[0.0627, 0.0314, 0.1098,  ..., 0.8157, 0.8314, 0.8471],
-#         [0.0510, 0.0353, 0.0941,  ..., 0.7922, 0.7765, 0.8235],
-#         [0.0627, 0.0627, 0.0980,  ..., 0.6353, 0.4510, 0.3608],
-        #print(f"Merged {merged_tensor}")
+        # #Tensors are C_H_W and are scaled (div 255), but not normalized
+        optical_tensor = torchvision.transforms.ToTensor()(imgs[0])
+        optical_flow_tensor = torchvision.transforms.ToTensor()(imgs[1])
+        # print(
+        #    f"optical max:{optical_tensor.max()},mean:{optical_tensor.mean()}, OF Max:{optical_flow_tensor.max()},mean:{optical_flow_tensor.mean()}")
 
+        self.update_stats('optical', optical_tensor)
+        self.update_stats('optical_flow', optical_flow_tensor)
+        # self.print_stats('optical')
+        # self.print_stats('optical_flow')
+
+        merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
         #txform = merged_tensor[:, None, None] / merged_tensor[:, None, None]
         ret = (merged_tensor, target)
         #self.cache[idx] = ret
         return ret
 
+    def init_stats(self, img_name):
+        self.stats[img_name] = {
+            'psum': torch.tensor([0.0, 0.0, 0.0]),
+            'psum_sq': torch.tensor([0.0, 0.0, 0.0]),
+            'pixel_count': 0
+        }
+
+    def update_stats(self, img_name, tensor):
+        _, height, width = tensor.shape
+        #print(f"update stats tensor size: {tensor.shape}")
+        self.stats[img_name]['psum'] += tensor.sum(axis=[1, 2])
+        self.stats[img_name]['psum_sq'] += (tensor**2).sum(axis=[1, 2])
+        self.stats[img_name]['pixel_count'] += width*height
+
+    def print_stats(self, img_name):
+        count = self.stats[img_name]['pixel_count']
+        total_mean = self.stats[img_name]['psum'] / count
+        total_var = (self.stats[img_name]['psum_sq'] /
+                     count) - (total_mean ** 2)
+        total_std = torch.sqrt(total_var)
+        print(
+            f"{img_name} stats, mean:{total_mean}, std:{total_std}")
+
     def __len__(self):
         return len(self.imgs)
 
 
-def get_model_instance_segmentation(num_classes):
-    # load an instance segmentation model pre-trained pre-trained on COCO
-    model = torchvision.models.detection.maskrcnn_resnet50_fpn(
-        pretrained=False)
-
-    # get number of input features for the classifier
-
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-    # replace the pre-trained head with a new one
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
-    # now get the number of input features for the mask classifier
-    in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
-    hidden_layer = 256
-    # and replace the mask predictor with a new one
-    model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask,
-                                                       hidden_layer,
-                                                       num_classes)
-
-    return model
-
-
-def get_fasterrcnn_model2(input_channels, num_classes):
-
-    # fasterrcnn_mobilenet_v3_large_fpn
-
-    # Default is ((32,), (64,), (128,), (256,), (512,))
-    anchor_sizes = ((2), (4), (8), (16), (32))
-
-    # Default: ((0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0), (0.5, 1.0, 2.0))
-    #aspect_ratios = ((0.5), (1.0), (1.5), (2.0))
-    aspect_ratios = ((0.5, 1.0, 1.5), (0.5, 1.0, 1.5),
-                     (0.5, 1.0, 1.5), (0.5, 1.0, 1.5),
-                     (0.5, 1.0, 1.5))
-
-    anchor_generator = AnchorGenerator(
-        sizes=anchor_sizes, aspect_ratios=aspect_ratios)
-    print(f"sizes: {anchor_sizes}")
-    print(f"ratios: {aspect_ratios}")
-
-    if input_channels == 3:
-        image_mean = [0.485, 0.456, 0.406]
-        image_std = [0.229, 0.224, 0.225]
-    elif input_channels == 6:
-        image_mean = [0.485, 0.456, 0.406, 0.485, 0.456, 0.406]
-        image_std = [0.229, 0.224, 0.225, 0.229, 0.224, 0.225]
-
-    model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
-        pretrained=False,
-        image_mean=image_mean,
-        image_std=image_std,
-        rpn_anchor_generator=anchor_generator,
-        min_size=1080,
-        max_size=2048)
-
-    # get number of input features for the classifier
-
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-    # replace the pre-trained head with a new one
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
-    model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
-                                                stride=2, padding=3, bias=False)
-
-    return model
-
-
-def get_model(input_channels, classes):
-    model = get_model_instance_segmentation(classes)
-    model.backbone.body.conv1 = torch.nn.Conv2d(input_channels, 64, kernel_size=7,
-                                                stride=2, padding=3, bias=False)
-    return model
+def get_long_transform():
+    def sometimes(aug): return imgaug.augmenters.Sometimes(0.75, aug)
+    return imgaug.augmenters.Sequential([
+        sometimes(imgaug.augmenters.Affine(
+            scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
+            rotate=random.randint(0, 359)),
+        ),
+        imgaug.augmenters.SomeOf(
+            (0, 5),
+            [
+                imgaug.augmenters.OneOf([
+                    imgaug.augmenters.GaussianBlur((0, 3.0)),
+                    imgaug.augmenters.AverageBlur(k=(2, 7)),
+                    imgaug.augmenters.MedianBlur(k=(3, 11)),
+                ]),
+                imgaug.augmenters.OneOf([
+                    imgaug.augmenters.Dropout(
+                        (0.01, 0.1), per_channel=0.5),
+                    imgaug.augmenters.CoarseDropout(
+                        (0.03, 0.15), size_percent=(0.02, 0.05),
+                        per_channel=0.2),
+                ]
+                )], random_order=True)
+    ], random_order=True)
 
 
 def get_transform(train):
-    transforms = []
-    # This is done in the loader now instead
-    #  transforms.append(T.ToTensor())
     if train:
-        transforms.append(T.RandomHorizontalFlip(0.5))
-    return T.Compose(transforms)
+        return imgaug.augmenters.Sequential([
+            imgaug.augmenters.GaussianBlur(sigma=(0, 3.0)),
+            imgaug.augmenters.Affine(rotate=random.randint(0, 359))])
+    else:
+        return imgaug.augmenters.Sequential([])
 
 
 def get_args_parser(add_help=True):
@@ -544,8 +526,8 @@ def main():
     if dataset_name == 'stf':
         dataset_test = STFOpticalFlowDataset(
             '../simpletracker/output/2021_11_26-06_18_02_PM/video_000000/',
-            #'../simpletracker/output/2021_11_26-07_18_24_PM/birds_and_plane_000000/',
-            #'../simpletracker/output/2021_11_26-08_16_29_PM/Test_Trimmed_000000/',
+            # '../simpletracker/output/2021_11_26-07_18_24_PM/birds_and_plane_000000/',
+            # '../simpletracker/output/2021_11_26-08_16_29_PM/Test_Trimmed_000000/',
             get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
         dataset_test = torch.utils.data.Subset(dataset_test, indices[:10])
@@ -569,7 +551,7 @@ def main():
         dataset = PesmodOpticalFlowDataset(
             os.path.join('INPUT', 'train'), get_transform(train=True))
         dataset_test = PesmodOpticalFlowDataset(
-            os.path.join('INPUT', 'test'), get_transform(train=False))
+            os.path.join('INPUT', 'train'), get_transform(train=False))
         indices = torch.randperm(len(dataset_test)).tolist()
 
         dataset_test = torch.utils.data.Subset(dataset_test, indices[:100])
@@ -579,22 +561,20 @@ def main():
 
     if not args.test_only:
         data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=4,
+            dataset, batch_size=batch_size, shuffle=True, num_workers=8,
             collate_fn=utils.collate_fn)
 
     data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=1, shuffle=False, num_workers=4,
+        dataset_test, batch_size=1, shuffle=False, num_workers=8,
         collate_fn=utils.collate_fn)
 
-    model = get_fasterrcnn_model2(num_channels, 2)
+    num_classes = 2
+    model = Model(num_channels, num_classes)
 
     #write_to_tb(data_loader, model)
 
-    # move model to the right device
-    model.to(device)
-
     # construct an optimizer
-    params = [p for p in model.parameters() if p.requires_grad]
+    params = [p for p in model.get_model().parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=0.005,
                                 momentum=0.9, weight_decay=0.0005)
     # and a learning rate scheduler
@@ -610,7 +590,7 @@ def main():
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(checkpoint["model"])
+        model.resume(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         args.start_epoch = checkpoint["epoch"] + 1
@@ -619,19 +599,19 @@ def main():
 
     if args.test_only:
         print("Testing only")
-        evaluate(model, data_loader_test, device=device, epoch=0)
+        evaluate(model.get_model(), data_loader_test, device=device, epoch=0)
         return
 
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch, printing every 10 iterations
-        train_one_epoch(model, optimizer, data_loader,
+        train_one_epoch(model.get_model(), optimizer, data_loader,
                         device, epoch, 10, scaler)
         # update the learning rate
         lr_scheduler.step()
 
         if output_dir:
             checkpoint = {
-                "model": model.state_dict(),
+                "model": model.get_model().state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": lr_scheduler.state_dict(),
                 "args": {},
@@ -645,7 +625,8 @@ def main():
                 output_dir, "checkpoint.pth"))
 
         # evaluate on the test dataset
-        evaluate(model, data_loader_test, device=device, epoch=epoch)
+        evaluate(model.get_model(), data_loader_test,
+                 device=device, epoch=epoch)
 
     print("That's it!")
 
