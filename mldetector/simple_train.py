@@ -568,7 +568,8 @@ def main():
         dataset_test, batch_size=1, shuffle=False, num_workers=8,
         collate_fn=utils.collate_fn)
 
-    model = Model(num_channels, 2)
+    num_classes = 2
+    model = Model(num_channels, num_classes)
 
     #write_to_tb(data_loader, model)
 
