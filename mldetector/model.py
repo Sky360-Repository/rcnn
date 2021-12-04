@@ -1,7 +1,9 @@
+from PIL.Image import merge
 import torch
 import torchvision
 from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+import numpy as np
 
 
 class Model():
@@ -64,5 +66,17 @@ class Model():
     def get_model(self):
         return self.model
 
+    def get_checkpoint(self, filename):
+        return torch.load(filename, map_location="cpu")
+
     def resume(self, params):
         self.model.load_state_dict(params)
+
+    def detect(self, frame, optical_flow):
+        self.model.eval()
+        print(f"{frame.shape}, {optical_flow.shape}")
+        optical_tensor = torchvision.transforms.ToTensor()(np.array(frame))
+        optical_flow_tensor = torchvision.transforms.ToTensor()(np.array(optical_flow))
+        merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
+        print(f"{merged_tensor.shape}")
+        return self.model([merged_tensor])
