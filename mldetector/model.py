@@ -79,4 +79,5 @@ class Model():
         optical_flow_tensor = torchvision.transforms.ToTensor()(np.array(optical_flow))
         merged_tensor = torch.cat((optical_tensor, optical_flow_tensor), 0)
         print(f"{merged_tensor.shape}")
+        merged_tensor = merged_tensor.to(self.device)
         return self.model([merged_tensor])
